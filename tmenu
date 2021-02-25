@@ -1,0 +1,87 @@
+#!/bin/bash
+set -e
+
+# setup environment
+TMENU_PATH=$(dirname $(readlink -f $0))
+TMENU_WORKING_DIRECTORY=$(mktemp -d)
+
+cleanup() {
+    rm -rf "$WORK_DIR"
+}
+
+trap cleanup EXIT
+
+cd $TMENU_WORKING_DIRECTORY
+export TMENU_WORKING_DIRECTORY="$TMENU_WORKING_DIRECTORY"
+
+# set title
+echo -ne "\033]0;TMenu\007"
+
+# setup state
+touch session
+touch command
+
+# helper
+_tmux() {
+    tmux -f $TMENU_PATH/tmux.conf $*
+}
+
+_tmenu-tui() {
+    $TMENU_PATH/tmenu-tui $*
+}
+
+# scratchpad
+scratchpad_is_running() {
+    _tmux list-sessions | grep "^0: "
+}
+
+start_scratchpad() {
+    _tmux new-session -c $HOME -s 0 -d
+}
+
+open_scratchpad() {
+    scratchpad_is_running || start_scratchpad
+    _tmux attach-session -t 0
+}
+
+# main loop
+while true; do
+    clear
+
+    _tmenu-tui || {
+        sleep 1  # slow loop down in case of crash
+
+        exit 1
+    }
+
+    SESSION=$(cat session)
+    COMMAND=$(cat command)
+
+    if [[ "$COMMAND" == "quit" ]]; then
+        break
+
+    elif [[ "$COMMAND" == "scratchpad" ]]; then
+        open_scratchpad
+
+    elif [[ "$COMMAND" == "start-session" ]]; then
+        cd $HOME
+        _tmux new-session
+        cd $TMENU_WORKING_DIRECTORY
+
+    elif [[ "$COMMAND" == "shell" ]]; then
+        cd $HOME
+        clear
+        $SHELL
+        cd $TMENU_WORKING_DIRECTORY
+
+    elif [[ "$COMMAND" == "kill-session" ]]; then
+        _tmux kill-session -t "$SESSION"
+
+    elif [[ "$COMMAND" == "kill-server" ]]; then
+        _tmux kill-server
+
+    else
+        _tmux attach-session -t "$SESSION"
+
+    fi
+done

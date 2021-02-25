@@ -1,0 +1,279 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+from subprocess import CalledProcessError, check_output, call
+import shutil
+import termios
+import sys
+import tty
+import os
+
+SESSION_PATH = 'session'
+COMMAND_PATH = 'command'
+
+TERMINAL_SIZE = shutil.get_terminal_size()
+TERMINAL_WIDTH = TERMINAL_SIZE.columns
+TERMINAL_HEIGHT = TERMINAL_SIZE.lines
+
+KEYBOARD_UP_CHARS = [
+    'n',  # dvorak vi
+    'k',  # vi
+]
+
+KEYBOARD_DOWN_CHARS = [
+    't',  # dvorak vi
+    'j',  # vi
+]
+
+KEYBOARD_ENTER_CHARS = [
+    '\r',     # ENTER
+]
+
+KEYBOARD_DOWN = 1
+KEYBOARD_UP = 2
+KEYBOARD_ENTER = 3
+
+
+def getchar():
+    file_descriptor = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(file_descriptor)
+
+    try:
+        tty.setraw(file_descriptor)
+        char = sys.stdin.read(1)
+
+    finally:
+        termios.tcsetattr(file_descriptor, termios.TCSADRAIN, old_settings)
+
+    return char
+
+
+def get_keyboard_input(extra_chars=[]):
+    while True:
+        char = getchar()
+
+        if char in KEYBOARD_DOWN_CHARS:
+            return KEYBOARD_DOWN
+
+        elif char in KEYBOARD_UP_CHARS:
+            return KEYBOARD_UP
+
+        elif char in KEYBOARD_ENTER_CHARS:
+            return KEYBOARD_ENTER
+
+        if char in extra_chars:
+            return char
+
+
+def color(string, color='', background='', style='', reset=True):
+    reset_string = '\033[00m' if reset else ''
+
+    if not string and reset:
+        return reset_string
+
+    if style:
+        style = {
+            'bright': '1',
+            'underlined': '2',
+            'negative': '3',
+        }[style]
+
+    if color:
+        color = {
+            'black': '30',
+            'red': '31',
+            'green': '32',
+            'yellow': '33',
+            'blue': '34',
+            'magenta': '35',
+            'cyan': '36',
+            'white': '37',
+        }[color]
+
+        if style:
+            color = ';{}'.format(color)
+
+    if background:
+        background = {
+            'black': '40',
+            'red': '41',
+            'green': '42',
+            'yellow': '43',
+            'blue': '44',
+            'magenta': '45',
+            'cyan': '46',
+            'white': '47',
+        }[background]
+
+        if color:
+            background = ';{}'.format(background)
+
+    return '\033[{}{}{}m{}{}'.format(
+        style,
+        color,
+        background,
+        string,
+        reset_string,
+    )
+
+
+def clear_shell():
+    call('clear')
+
+
+def tmux_list_sessions():
+    scratchpad_running = False
+    sessions = []
+
+    try:
+        output = check_output(['tmux', 'list-sessions']).decode()
+
+        for line in output.splitlines():
+            session = line.strip().split(':')[0]
+
+            if session == '0':  # reserved for scratchpad
+                scratchpad_running = True
+
+                continue
+
+            sessions.append(session)
+
+    except CalledProcessError:
+        # tmux returns 1 if no sessions are running
+
+        return scratchpad_running, sessions
+
+    return scratchpad_running, sorted(sessions)
+
+
+if __name__ == '__main__':
+    # setup state
+    scratchpad_running, sessions = tmux_list_sessions()
+    cursor = 0
+
+    with open(SESSION_PATH, 'r') as f:
+        tmux_selected_session = f.read()
+
+        if tmux_selected_session in sessions:
+            cursor = sessions.index(tmux_selected_session)
+
+    session = ''
+    command = ''
+
+    # main loop
+    while True:
+
+        # print tui
+        clear_shell()
+        print(color('TMenu v0.1 {}\n'.format(os.getcwd()), style='bright'))
+
+        # scratchpad running
+        if not scratchpad_running:
+            print(
+                color('  no running scratchpad', color='red', style='bright'))
+
+        # list sessions
+        if sessions:
+            if not sessions or not scratchpad_running:
+                print()
+
+            for index, session_name in enumerate(sessions):
+                line = '  {}{}'.format(
+                    session_name,
+                    (TERMINAL_WIDTH - len(session_name) - 2) * ' '
+                )
+
+                # cursor line
+                if index == cursor:
+                    print(color(line, color='black', background='white'))
+
+                # regular line
+                else:
+                    print(color(line, color='white'))
+
+        # show *no sessions*
+        else:
+            print(color('  no running sessions', color='red', style='bright'))
+
+        # prompt
+        print()
+        print('q exit')
+        print('0 scratch pad')
+        print('1 start session')
+        print('2 start shell')
+
+        if sessions:
+            print('3 kill session')
+
+        print('4 kill server')
+        print('\n> ', end='')
+
+        # user select
+        keyboard_input = get_keyboard_input(
+            extra_chars=['g', 'G', 'q', '0', '1', '2', '3', '4'])
+
+        # disable cursor if no sessions are running
+        if not sessions and keyboard_input not in ('q', '0', '1', '2', '4'):
+            continue
+
+        if keyboard_input == KEYBOARD_UP:
+            cursor -= 1
+
+        elif keyboard_input == KEYBOARD_DOWN:
+            cursor += 1
+
+        elif keyboard_input == 'g':
+            cursor = 0
+
+        elif keyboard_input == 'G':
+            cursor = len(sessions) - 1
+
+        elif keyboard_input == KEYBOARD_ENTER:
+            session = sessions[cursor]
+
+            break
+
+        elif keyboard_input == 'q':
+            command = 'quit'
+
+            break
+
+        elif keyboard_input == '0':
+            command = 'scratchpad'
+
+            break
+
+        elif keyboard_input == '1':
+            command = 'start-session'
+
+            break
+
+        elif keyboard_input == '2':
+            command = 'shell'
+
+            break
+
+        elif keyboard_input == '3':
+            session = sessions[cursor]
+            command = 'kill-session'
+
+            break
+
+        elif keyboard_input == '4':
+            command = 'kill-server'
+
+            break
+
+        # adjust cursor
+        if cursor == -1:
+            cursor = len(sessions) - 1
+
+        elif cursor > len(sessions) - 1:
+            cursor = 0
+
+    # write result
+    with open(SESSION_PATH, 'w+') as f:
+        f.write(session)
+
+    with open(COMMAND_PATH, 'w+') as f:
+        f.write(command)
