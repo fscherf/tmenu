@@ -30,6 +30,16 @@ _tmenu-tui() {
     $TMENU_PATH/tmenu-tui $*
 }
 
+generate_session_name() {
+    session_name="unnamed-$1"
+
+    if _tmux list-sessions | grep -q "^$session_name: "; then
+        generate_session_name $(($1 + 1))
+    else
+        echo $session_name
+    fi
+}
+
 # scratchpad
 scratchpad_is_running() {
     _tmux list-sessions | grep "^0: "
@@ -65,7 +75,7 @@ while true; do
 
     elif [[ "$COMMAND" == "start-session" ]]; then
         cd $HOME
-        _tmux new-session
+        _tmux new-session -s $(generate_session_name 1)
         cd $TMENU_WORKING_DIRECTORY
 
     elif [[ "$COMMAND" == "shell" ]]; then
