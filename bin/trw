@@ -1,0 +1,3 @@
+#!/bin/sh
+
+tmux rename-window $(echo "$(basename $PWD)" | sed -r "s/\./_/g")

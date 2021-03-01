@@ -1,0 +1,3 @@
+#!/bin/sh
+
+tmux rename-session $(echo "$(basename $PWD)" | sed -r "s/\./_/g")
