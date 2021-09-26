@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-from subprocess import CalledProcessError, check_output, call
-import shutil
+from subprocess import CalledProcessError, check_output
+from contextlib import suppress
+from enum import Enum
 import termios
+import shutil
+import signal
 import sys
 import tty
 import os
@@ -11,114 +14,179 @@ import os
 SESSION_PATH = 'session'
 COMMAND_PATH = 'command'
 
-TERMINAL_SIZE = shutil.get_terminal_size()
-TERMINAL_WIDTH = TERMINAL_SIZE.columns
-TERMINAL_HEIGHT = TERMINAL_SIZE.lines
 
-KEYBOARD_UP_CHARS = [
-    'n',  # dvorak vi
-    'k',  # vi
-]
+class Terminal:
+    class EVENTS(Enum):
+        KEY = 'KEY'
+        RESIZE = 'RESIZE'
 
-KEYBOARD_DOWN_CHARS = [
-    't',  # dvorak vi
-    'j',  # vi
-]
+    class KEYS(Enum):
+        ESCAPE = '\x1b'
+        CTRL_C = '\x03'
+        ENTER = '\r'
+        ARROW_UP = '\x1b[A'
+        ARROW_DOWN = '\x1b[B'
+        ARROW_RIGHT = '\x1b[C'
+        ARROW_LEFT = '\x1b[D'
 
-KEYBOARD_ENTER_CHARS = [
-    '\r',     # ENTER
-]
+    KEYBOARD_UP_KEYS = [
+        KEYS.ARROW_UP,
+        'n',  # dvorak vi
+        'k',  # vi
+    ]
 
-KEYBOARD_DOWN = 1
-KEYBOARD_UP = 2
-KEYBOARD_ENTER = 3
+    KEYBOARD_DOWN_KEYS = [
+        KEYS.ARROW_DOWN,
+        't',  # dvorak vi
+        'j',  # vi
+    ]
 
+    KEYBOARD_ENTER_KEYS = [
+        KEYS.ENTER,
+    ]
 
-def getchar():
-    file_descriptor = sys.stdin.fileno()
-    old_settings = termios.tcgetattr(file_descriptor)
+    KEYBOARD_QUIT_KEYS = [
+        KEYS.CTRL_C,
+        'q',
+    ]
 
-    try:
+    def __init__(self):
+        self.events = []
+
+        # setup sigwinch signal handler
+        signal.signal(signal.SIGWINCH, self.handle_resize)
+
+    # events ##################################################################
+    def handle_alarm(self, signum, frame):
+        raise TimeoutError()
+
+    def handle_resize(self, signum, frame):
+        self.events.append(self.EVENTS('RESIZE'))
+
+    def get_event(self, timeout=0.01):
+        buffer = ''
+
+        # set stdin into raw mode
+        file_descriptor = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(file_descriptor)
         tty.setraw(file_descriptor)
-        char = sys.stdin.read(1)
 
-    finally:
-        termios.tcsetattr(file_descriptor, termios.TCSADRAIN, old_settings)
+        # setup alarm signal handler
+        signal.signal(signal.SIGALRM, self.handle_alarm)
 
-    return char
+        try:
+            while True:
+                # check for events
+                if self.events:
+                    event = self.events.pop()
 
+                    # resize
+                    if event == self.EVENTS.RESIZE:
+                        return event, self.get_size()
 
-def get_keyboard_input(extra_chars=[]):
-    while True:
-        char = getchar()
+                    # misc events
+                    return event, None
 
-        if char in KEYBOARD_DOWN_CHARS:
-            return KEYBOARD_DOWN
+                # check if key was pressed
+                if buffer:
+                    try:
+                        return self.EVENTS('KEY'), self.KEYS(buffer)
 
-        elif char in KEYBOARD_UP_CHARS:
-            return KEYBOARD_UP
+                    except ValueError:
+                        return self.EVENTS('KEY'), buffer
 
-        elif char in KEYBOARD_ENTER_CHARS:
-            return KEYBOARD_ENTER
+                # setup timer
+                signal.setitimer(signal.ITIMER_REAL, timeout)
 
-        if char in extra_chars:
-            return char
+                with suppress(TimeoutError):
+                    # read from stdin into buffer
+                    while True:
+                        buffer += sys.stdin.read(1)
 
+        finally:
+            # clear alarm
+            signal.alarm(0)
 
-def color(string, color='', background='', style='', reset=True):
-    reset_string = '\033[00m' if reset else ''
+            # reset stdin to standard setting
+            termios.tcsetattr(
+                file_descriptor,
+                termios.TCSADRAIN,
+                old_settings,
+            )
 
-    if not string and reset:
-        return reset_string
+        return buffer
 
-    if style:
-        style = {
-            'bright': '1',
-            'underlined': '2',
-            'negative': '3',
-        }[style]
+    # output ##################################################################
+    def get_size(self):
+        terminal_size = shutil.get_terminal_size()
 
-    if color:
-        color = {
-            'black': '30',
-            'red': '31',
-            'green': '32',
-            'yellow': '33',
-            'blue': '34',
-            'magenta': '35',
-            'cyan': '36',
-            'white': '37',
-        }[color]
+        return (
+            terminal_size.columns,
+            terminal_size.lines,
+        )
+
+    def save_cursor_position(self):
+        print('\033[s', end='')
+
+    def reset_cursor_position(self):
+        print('\033[u', end='')
+
+    def clear(self):
+        os.system('clear')
+
+    def reset(self):
+        self.reset_cursor_position()
+
+    def color(self, string, color='', background='', style='', reset=True):
+        reset_string = '\033[00m' if reset else ''
+
+        if not string and reset:
+            return reset_string
 
         if style:
-            color = ';{}'.format(color)
-
-    if background:
-        background = {
-            'black': '40',
-            'red': '41',
-            'green': '42',
-            'yellow': '43',
-            'blue': '44',
-            'magenta': '45',
-            'cyan': '46',
-            'white': '47',
-        }[background]
+            style = {
+                'bright': '1',
+                'underlined': '2',
+                'negative': '3',
+            }[style]
 
         if color:
-            background = ';{}'.format(background)
+            color = {
+                'black': '30',
+                'red': '31',
+                'green': '32',
+                'yellow': '33',
+                'blue': '34',
+                'magenta': '35',
+                'cyan': '36',
+                'white': '37',
+            }[color]
 
-    return '\033[{}{}{}m{}{}'.format(
-        style,
-        color,
-        background,
-        string,
-        reset_string,
-    )
+            if style:
+                color = ';{}'.format(color)
 
+        if background:
+            background = {
+                'black': '40',
+                'red': '41',
+                'green': '42',
+                'yellow': '43',
+                'blue': '44',
+                'magenta': '45',
+                'cyan': '46',
+                'white': '47',
+            }[background]
 
-def clear_shell():
-    call('clear')
+            if color:
+                background = ';{}'.format(background)
+
+        return '\033[{}{}{}m{}{}'.format(
+            style,
+            color,
+            background,
+            string,
+            reset_string,
+        )
 
 
 def tmux_list_sessions():
@@ -147,8 +215,13 @@ def tmux_list_sessions():
 
 
 if __name__ == '__main__':
+    terminal = Terminal()
+
+    terminal.save_cursor_position()
+
     # setup state
     scratchpad_running, sessions = tmux_list_sessions()
+    terminal_width, terminal_height = terminal.get_size()
     cursor = 0
 
     with open(SESSION_PATH, 'r') as f:
@@ -164,13 +237,24 @@ if __name__ == '__main__':
     while True:
 
         # print tui
-        clear_shell()
-        print(color('TMenu v0.1 {}\n'.format(os.getcwd()), style='bright'))
+        terminal.reset()
+
+        print(
+            terminal.color(
+                'TMenu v0.1 {}\n'.format(os.getcwd()),
+                style='bright',
+            )
+        )
 
         # scratchpad running
         if not scratchpad_running:
             print(
-                color('  no running scratchpad', color='red', style='bright'))
+                terminal.color(
+                    '  no running scratchpad',
+                    color='red',
+                    style='bright',
+                ),
+            )
 
         # list sessions
         if sessions:
@@ -180,20 +264,28 @@ if __name__ == '__main__':
             for index, session_name in enumerate(sessions):
                 line = '  {}{}'.format(
                     session_name,
-                    (TERMINAL_WIDTH - len(session_name) - 2) * ' '
+                    (terminal_width - len(session_name) - 2) * ' '
                 )
 
                 # cursor line
                 if index == cursor:
-                    print(color(line, color='black', background='white'))
+                    print(
+                        terminal.color(line, color='black', background='white')
+                    )
 
                 # regular line
                 else:
-                    print(color(line, color='white'))
+                    print(terminal.color(line, color='white'))
 
         # show *no sessions*
         else:
-            print(color('  no running sessions', color='red', style='bright'))
+            print(
+                terminal.color(
+                    '  no running sessions',
+                    color='red',
+                    style='bright',
+                )
+            )
 
         # prompt
         print()
@@ -208,18 +300,28 @@ if __name__ == '__main__':
         print('4 kill server')
         print('\n> ', end='')
 
-        # user select
-        keyboard_input = get_keyboard_input(
-            extra_chars=['g', 'G', 'q', '0', '1', '2', '3', '4'])
+        # wait for terminal event
+        event, event_payload = terminal.get_event()
+
+        # terminal got resized
+        if event == Terminal.EVENTS.RESIZE:
+            terminal.clear()
+            terminal_width, terminal_height = event_payload
+
+            continue
+
+        # keyboard input
+        else:
+            keyboard_input = event_payload
 
         # disable cursor if no sessions are running
         if not sessions and keyboard_input not in ('q', '0', '1', '2', '4'):
             continue
 
-        if keyboard_input == KEYBOARD_UP:
+        if keyboard_input in Terminal.KEYBOARD_UP_KEYS:
             cursor -= 1
 
-        elif keyboard_input == KEYBOARD_DOWN:
+        elif keyboard_input in Terminal.KEYBOARD_DOWN_KEYS:
             cursor += 1
 
         elif keyboard_input == 'g':
@@ -228,12 +330,12 @@ if __name__ == '__main__':
         elif keyboard_input == 'G':
             cursor = len(sessions) - 1
 
-        elif keyboard_input == KEYBOARD_ENTER:
+        elif keyboard_input in Terminal.KEYBOARD_ENTER_KEYS:
             session = sessions[cursor]
 
             break
 
-        elif keyboard_input == 'q':
+        elif keyboard_input in Terminal.KEYBOARD_QUIT_KEYS:
             command = 'quit'
 
             break
