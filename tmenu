@@ -4,6 +4,8 @@ set -e
 # setup environment
 TMENU_PATH=$(dirname $(readlink -f $0))
 TMENU_WORKING_DIRECTORY=$(mktemp -d)
+TMENU_HISTORY_PATH=~/.tmenu_history
+TMENU_HISTORY_MAX_LEN=100
 
 cleanup() {
     rm -rf "$WORK_DIR"
@@ -28,6 +30,13 @@ _tmux() {
 
 _tmenu-tui() {
     $TMENU_PATH/tmenu-tui $*
+}
+
+_tmenu-history() {
+    echo $1 >> $TMENU_HISTORY_PATH
+    mv $TMENU_HISTORY_PATH $TMENU_HISTORY_PATH.old
+    tail -$TMENU_HISTORY_MAX_LEN $TMENU_HISTORY_PATH.old > $TMENU_HISTORY_PATH
+    rm $TMENU_HISTORY_PATH.old
 }
 
 generate_session_name() {
@@ -91,6 +100,7 @@ while true; do
         _tmux kill-server
 
     else
+        _tmenu-history $SESSION
         _tmux attach-session -t "$SESSION"
 
     fi

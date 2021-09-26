@@ -13,6 +13,7 @@ import os
 
 SESSION_PATH = 'session'
 COMMAND_PATH = 'command'
+HISTORY_PATH = os.path.join(os.environ['HOME'], '.tmenu_history')
 
 
 class Terminal:
@@ -211,7 +212,27 @@ def tmux_list_sessions():
 
         return scratchpad_running, sessions
 
-    return scratchpad_running, sorted(sessions)
+    sessions = sorted(sessions)
+
+    # sort sessions after history file
+    if os.path.exists(HISTORY_PATH):
+        history = []
+
+        with open(HISTORY_PATH, 'r') as f:
+            history = [i.strip() for i in f.readlines()][::-1]
+            history = list(dict.fromkeys(history))
+
+        for line in history.copy():
+            if line not in sessions:
+                history.remove(line)
+
+        for session in sessions.copy():
+            if session in history:
+                sessions.remove(session)
+
+        sessions = history + sessions
+
+    return scratchpad_running, sessions
 
 
 if __name__ == '__main__':
