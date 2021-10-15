@@ -5,6 +5,7 @@ from subprocess import CalledProcessError, check_output
 from contextlib import suppress
 from enum import Enum
 import termios
+import atexit
 import shutil
 import signal
 import sys
@@ -132,6 +133,12 @@ class Terminal:
     def reset_cursor_position(self):
         print('\033[u', end='')
 
+    def hide_cursor(self):
+        print('\x1b[?25l', end='')
+
+    def show_cursor(self):
+        print('\x1b[?25h', end='')
+
     def clear(self):
         os.system('clear')
 
@@ -239,6 +246,13 @@ if __name__ == '__main__':
     terminal = Terminal()
 
     terminal.save_cursor_position()
+    terminal.hide_cursor()
+
+    # setup exit handler
+    def exit_handler():
+        terminal.show_cursor()
+
+    atexit.register(exit_handler)
 
     # setup state
     scratchpad_running, sessions = tmux_list_sessions()
@@ -317,9 +331,6 @@ if __name__ == '__main__':
 
         if sessions:
             print('3 kill session')
-
-        print('4 kill server')
-        print('\n> ', end='')
 
         # wait for terminal event
         event, event_payload = terminal.get_event()
